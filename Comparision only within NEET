@@ -1,0 +1,374 @@
+import pandas as pd
+pd.options.display.float_format = "{:.1f}".format
+ 
+# Load datasets
+personal = pd.read_stata("s01.dta")
+housing = pd.read_stata("s02.dta")
+education = pd.read_stata("s07.dta", convert_categoricals=False)
+employment = pd.read_stata("s09.dta", convert_categoricals=False)
+farming1 = pd.read_stata("s11.dta")
+farming2 = pd.read_stata("s11a1.dta")
+assets = pd.read_stata("s13.dta")
+absentees = pd.read_stata("s14.dta")
+abroadabsentees = pd.read_stata("s14a.dta", convert_categoricals=False)
+weight = pd.read_stata("weight.dta")
+poverty = pd.read_stata("poverty.dta")
+
+# classify employment status
+def classify(row):
+    q2 = row.get("q09_02", 0)
+    q3 = row.get("q09_03", 0)
+    q4 = row.get("q09_04", 0)
+    q5 = row.get("q09_05", 0)
+    q18 = row.get("q09_18", 0)
+    q19 = row.get("q09_19", 0)
+    q20 = row.get("q09_20", 0)
+    q22 = row.get("q09_22", 0)
+
+    if q2 == 1 or q3 == 1 or q4 == 1 or q5 == 1:
+        return "employed"
+    if (q22 in [1, 2]) and (q18 == 1 or q19 == 1 or (1 <= q20 <= 12)):
+        return "unemployed"
+    return "not_in_lf"
+
+# merge datasets
+personal_unique = personal.drop_duplicates(subset=["psu_number", "hh_number", "idcode"])
+merged = pd.merge(personal_unique, employment, on=["psu_number", "hh_number", "idcode"], how="inner")
+mergedfinal = pd.merge(merged, weight[["psu_number", "hh_number", "hhs_wt", "ind_wt"]], on=["psu_number", "hh_number"], how="left")
+mergedfinal = pd.merge(mergedfinal, poverty[["psu_number", "hh_number", "ad_4", "domain", "prov", "poor", "pcep"]], on=["psu_number", "hh_number"], how="left")
+mergedfinal = pd.merge(mergedfinal, education[["psu_number", "hh_number", "idcode", "q07_04", "q07_06"]], on=["psu_number", "hh_number", "idcode"], how="left")
+mergedfinal = pd.merge(mergedfinal, absentees[["psu_number", "hh_number", "q14_01"]], on=["psu_number", "hh_number"], how="left")
+mergedfinal = pd.merge(mergedfinal, abroadabsentees[["psu_number", "hh_number", "q14_11", "q14_15", "q14_20", "q14_21"]], on=["psu_number", "hh_number"], how="left")
+mergedfinal = pd.merge(mergedfinal, housing[["psu_number", "hh_number", "q02_12"]], on=["psu_number", "hh_number"], how="left")
+mergedfinal = pd.merge(mergedfinal, farming1[["psu_number", "hh_number", "q11_31", "q11_31a"]], on=["psu_number", "hh_number"], how="left")
+mergedfinal = pd.merge(mergedfinal, farming2[["psu_number", "hh_number", "q11_13"]], on=["psu_number", "hh_number"], how="left")
+mergedfinal = pd.merge(mergedfinal, assets[["psu_number", "hh_number", "q13_28", "q13_29", "q13_34", "q13_35"]], on=["psu_number", "hh_number"], how="left")
+mergedfinal["classify1"] = mergedfinal.apply(classify, axis=1)
+
+# filter working age adults
+working_age = mergedfinal[mergedfinal["q01_03"] >= 15].copy()
+
+# NEET status
+working_age["neet_status"] = (working_age["classify1"] != "employed") & (working_age["q07_04"] != 3)
+
+# age bins
+def agebins(row):
+    if not row["neet_status"]:
+        return None
+    if 10 <= row.get("q01_03") <= 15:
+        return "10 to 15"
+    if 15 < row.get("q01_03") <= 20:
+        return "16 to 20"
+    if 20 < row.get("q01_03") <= 25:
+        return "21 to 25"
+    if 25 < row.get("q01_03") <= 30:
+        return "26 to 30"
+    if 30 < row.get("q01_03") <= 35:
+        return "31 to 35"
+    if 35 < row.get("q01_03") <= 40:
+        return "36 to 40"
+    if 40 < row.get("q01_03") <= 45:
+        return "41 to 45"
+    if 45 < row.get("q01_03") <= 50:
+        return "46 to 50"
+    if 50 < row.get("q01_03") <= 55:
+        return "51 to 55"
+    if 55 < row.get("q01_03") <= 60:
+        return "56 to 60"
+    else:
+        return"above 60"
+    
+working_age["age_bins"] = working_age.apply(agebins, axis=1)
+agepercentages = working_age["age_bins"].value_counts(normalize=True).sort_index() * 100
+print(agepercentages)
+
+# Household head
+def hh_head(row):
+    if row.get("q01_04", "") == "HEAD" and row["neet_status"]:
+        return f"{row['q01_02']} head"
+    return "Other"
+
+working_age["householdhead"] = working_age.apply(hh_head, axis=1)
+hhhpercentages = working_age["householdhead"].value_counts(normalize=True) * 100
+print(f"NEET Female Household Head: {hhhpercentages.get('Female head',0):.1f}%")
+print(f"NEET Male Household Head: {hhhpercentages.get('Male head',0):.1f}%")
+
+# NEET by sex
+def neetsex(row):
+    if row["neet_status"]:
+        return row["q01_02"]
+    return "Other"
+
+working_age["neet_sex"] = working_age.apply(neetsex, axis=1)
+sexpercentages = working_age["neet_sex"].value_counts(normalize=True) * 100
+print(f"NEET Females: {sexpercentages.get('Female',0):.1f}%")
+print(f"NEET Males: {sexpercentages.get('Male',0):.1f}%")
+
+# Marital status
+def marital(row):
+    if not row["neet_status"]:
+        return None
+    if row["q01_05"] == "Married":
+        return "Married"
+    elif row["q01_05"] == "Never married":
+        return "Never married"
+    else:
+        return "Other"
+
+working_age["marital_status"] = working_age.apply(marital, axis=1)
+maritalpercentages = working_age["marital_status"].value_counts(normalize=True) * 100
+print(f"NEET Married: {maritalpercentages.get('Married',0):.1f}%")
+print(f"NEET Never married: {maritalpercentages.get('Never married',0):.1f}%")
+print(f"NEET Other: {maritalpercentages.get('Other',0):.1f}%")
+
+# Rural/urban
+neet_only = working_age[working_age["neet_status"]]
+ruralurbanpercentages = neet_only["ad_4"].value_counts(normalize=True) * 100
+print(f"NEET Rural: {ruralurbanpercentages.get('Rural',0):.1f}%")
+print(f"NEET Other urban: {ruralurbanpercentages.get('Other urban',0):.1f}%")
+print(f"NEET Kathmandu urban: {ruralurbanpercentages.get('Kathmandu',0):.1f}%")
+
+# analytical domain
+neetdomain = (working_age[working_age["neet_status"]].groupby("domain").size() / working_age[working_age["neet_status"]].shape[0] * 100).sort_values(ascending=False)
+print("\nNEET percentages by domain:")
+print(neetdomain.round(1))
+
+# province
+neetprov = (working_age[working_age["neet_status"]].groupby("prov").size() / working_age[working_age["neet_status"]].shape[0] * 100).sort_values(ascending=False)
+print("\nNEET percentages by province:")
+print(neetprov.round(1))
+
+# poverty (poor or not)
+def neetpline(row):
+    if not row["neet_status"]:
+        return None
+    if str(row.get("poor")) == "1":
+        return "poor"
+    else:
+        return "non poor"
+
+working_age["neet_pline"] = working_age.apply(neetpline, axis=1)
+poorpercentages = working_age["neet_pline"].value_counts(normalize=True) * 100
+print(f"NEET poor: {poorpercentages.get('poor',0):.1f}%")
+print(f"NEET non poor: {poorpercentages.get('non poor',0):.1f}%")
+
+# households receiving remittances from abroad or not
+def neet_remittance_from_abroad(row):
+    if not row["neet_status"]:
+        return None
+    if row["q14_01"] != "YES":
+        return "no_absentee"
+    countrycode = row.get("q14_11")
+    if pd.isna(countrycode):
+        return "absentee_unknown"
+    if not (800 <= countrycode < 820):
+        return "absentee_not_abroad"
+    remittance = row.get("q14_15")
+    if pd.isna(remittance):
+        return "missing"
+    if remittance in ["YES", 1]:
+        return "remittance_from_abroad"
+    return "no_remittance_from_abroad"
+
+working_age["neet_remit_abroad"] = working_age.apply(neet_remittance_from_abroad, axis=1)
+percent = working_age["neet_remit_abroad"].value_counts(normalize=True) * 100
+
+print(f"NEET household receiving remittance from abroad: {percent.get('remittance_from_abroad',0):.1f}%")
+print(f"NEET household abroad absentee but no remittance: {percent.get('no_remittance_from_abroad',0):.1f}%")
+print(f"NEET household absentee not abroad: {percent.get('absentee_not_abroad',0):.1f}%")
+print(f"NEET household with no absentee: {percent.get('no_absentee',0):.1f}%")
+print(f"NEET household missing remittance info: {percent.get('missing',0):.1f}%")
+
+# amount of remittance in bins
+remit1 = working_age["q14_21"].where(working_age["q14_21"] > 0)
+if "q14_20" in working_age.columns:
+    remit2 = working_age["q14_20"].where(working_age["q14_20"] > 0)
+else:
+    remit2 = 0
+remit_total = remit1.fillna(0) + (remit2.fillna(0) if isinstance(remit2, pd.Series) else 0)
+remit_positive = remit_total.where(remit_total > 0)
+qcats, bins = pd.qcut(remit_positive, 5, labels=[1, 2, 3, 4, 5], retbins=True, duplicates="drop")
+working_age["remittance_quintile"] = qcats
+
+def remittance_amount(row):
+    if not row["neet_status"]:
+        return None
+    if row["q14_15"] not in ["YES", 1]:
+        return None
+    return row["remittance_quintile"]
+
+working_age["neet_remittance_quintile"] = working_age.apply(remittance_amount, axis=1)
+remittance_share = (working_age[working_age["neet_status"]]["neet_remittance_quintile"].value_counts(normalize=True).sort_index() * 100)
+print("\nNEET share by remittance amount quintile (%):")
+print(remittance_share)
+labels = ["Q1 poorest", "Q2", "Q3", "Q4", "Q5 richest"]
+print("\nRemittance quintile ranges (NPR):")
+for i in range(len(bins) - 1):
+    print(f"{labels[i]}: {bins[i]:,.0f}  to  {bins[i+1]:,.0f}")
+
+# family's consumption/income (bins and means, quintiles)
+working_age["pcep_quintile"] = pd.qcut(working_age["pcep"], 5, labels=[1, 2, 3, 4, 5])
+def neetpcepbins(row):
+    if not row["neet_status"]:
+        return None
+    return row["pcep_quintile"]
+
+working_age["neet_pcep_quintile"] = working_age.apply(neetpcepbins, axis=1)
+neet_quintile_share = (working_age[working_age["neet_status"]]["neet_pcep_quintile"].value_counts(normalize=True).sort_index() * 100)
+
+print("\nNEET share by consumption quintile (%):")
+print(neet_quintile_share)
+
+# consumption mean
+meanpcep = working_age["pcep"].mean()
+def neetpcep_mean(row):
+    if not row["neet_status"]:
+        return None
+    if row["pcep"] > meanpcep:
+        return "above mean"
+    return "below mean"
+
+working_age["neet_pcep_mean"] = working_age.apply(neetpcep_mean, axis=1)
+pceppercentages = (working_age["neet_pcep_mean"].value_counts(normalize=True) * 100)
+
+print("\nNEET above/below mean consumption (%):")
+print(f"NEET above mean: {pceppercentages.get('above mean', 0):.1f}%")
+print(f"NEET below mean: {pceppercentages.get('below mean', 0):.1f}%")
+
+# assets (bins)
+dwelling = pd.to_numeric(working_age["q02_12"], errors="coerce").fillna(0)
+if "q11_31a" in working_age.columns:
+    land = pd.to_numeric(working_age["q11_31a"], errors="coerce").fillna(0)
+elif "q11_31" in working_age.columns:
+    land = pd.to_numeric(working_age["q11_31"], errors="coerce").fillna(0)
+elif "q11_13" in working_age.columns:
+    land = pd.to_numeric(working_age["q11_13"], errors="coerce").fillna(0)
+else:
+    land = 0
+property_asset = pd.to_numeric(working_age["q13_29"], errors="coerce").where(working_age["q13_28"].isin(["YES", 1]),0).fillna(0)
+other_assets = pd.to_numeric(working_age["q13_35"], errors="coerce").where(working_age["q13_34"].isin(["YES", 1]),0).fillna(0)
+
+working_age["total_assets"] = dwelling + land + property_asset + other_assets
+assets_positive = working_age["total_assets"].where(working_age["total_assets"] > 0)
+
+qcats, bins = pd.qcut(assets_positive,5, labels=[1, 2, 3, 4, 5], retbins=True, duplicates="drop")
+
+working_age["asset_quintile"] = qcats
+working_age["neet_asset_quintile"] = working_age.apply(lambda row: row["asset_quintile"] if row["neet_status"] else None, axis=1)
+
+asset_share = (working_age[working_age["neet_status"]]["neet_asset_quintile"].value_counts(normalize=True).sort_index() * 100)
+
+print("\nNEET share by asset quintile (%):")
+print(asset_share)
+
+labels = ["Q1 poorest", "Q2", "Q3", "Q4", "Q5 richest"]
+print("\nAsset quintile ranges (NPR):")
+for i in range(len(bins) - 1):
+    print(f"{labels[i]}: {bins[i]:,.0f}  to  {bins[i+1]:,.0f}")
+
+# education level
+neet_edu_percent = neet_only["q07_04"].value_counts(normalize=True) * 100
+
+print("\nNEET percentages by school attendance:")
+print(f"Never attended school: {neet_edu_percent.get(1, 0):.1f}%")
+print(f"Attended school in the past: {neet_edu_percent.get(2, 0):.1f}%")
+
+# NEET education level in the past (only for people who attended in the past)
+neet_past_school = working_age[
+    (working_age["neet_status"]) & (working_age["q07_04"] == 2)
+].copy()
+def edu_level_completed(row):
+    level = row.get("q07_06")
+    if pd.isna(level):
+        return "Missing"
+    level = int(level)
+    if 0 <= level <= 8:
+        return "Basic (0–8)"
+    elif 9 <= level <= 12:
+        return "High School (9–12)"
+    elif level == 13:
+        return "Bachelor"
+    elif level == 14:
+        return "Master"
+    elif level == 15:
+        return "Professional Degree"
+    elif level == 16:
+        return "Literate (Levelles)"
+    elif level == 17:
+        return "Illiterate"
+    else:
+        return "Other/Unknown"
+neet_past_school["completed_level"] = neet_past_school.apply(edu_level_completed, axis=1)
+level_pct = neet_past_school["completed_level"].value_counts(normalize=True) * 100
+
+print("\nNEET (Attended school in past) – Completed Education Levels:")
+print(level_pct)
+
+# NEET education level in the past (both never attended and attended in the past)
+def neet_education_status(row):
+    if not row["neet_status"]:
+        return None
+    if row["q07_04"] == 1:
+        return "Never attended school"
+    elif row["q07_04"] == 2:
+        return edu_level_completed(row)
+    else:
+        return "Currently attending/Other"
+working_age["neet_edu_completed"] = working_age.apply(neet_education_status, axis=1)
+neet_only = working_age[working_age["neet_status"]]
+neet_edu_pct = neet_only["neet_edu_completed"].value_counts(normalize=True) * 100
+
+print("\nNEET Education Completion Distribution (Full):")
+print(neet_edu_pct.round(1))
+
+# Percentages within each sex
+school_map = {1: "Never attended school", 2: "Attended school in the past"}
+neet_only["school_status"] = neet_only["q07_04"].map(school_map)
+
+neet_sex_school_pct = pd.crosstab(neet_only["neet_sex"], neet_only["school_status"], normalize='index') * 100
+print("\nNEET percentages by sex and school attendance:")
+print(neet_sex_school_pct.round(1))
+
+# Age group categories for analysis
+neet_only["age_group"] = pd.cut(
+    neet_only["q01_03"],
+    bins=[14, 24, 45, 64],
+    labels=["15-24", "25-45", "46-64"])
+
+neet_only["school_status"] = neet_only["q07_04"].map(school_map)
+
+neet_age_edu_pct = pd.crosstab(neet_only["age_group"], neet_only["school_status"], normalize="index") * 100
+print("\nNEET percentages by age group and education attendance:")
+print(neet_age_edu_pct)
+
+# household with 0-3 year olds
+personal["child_0_3"] = personal["q01_03"].between(0, 3)
+hh_child03 = (personal.groupby(["psu_number", "hh_number"])["child_0_3"].any().reset_index().rename(columns={"child_0_3": "hh_has_child_0_3"}))
+working_age = pd.merge(working_age, hh_child03, on=["psu_number", "hh_number"], how="left")
+neet_only = working_age[working_age["neet_status"]]
+neet_child03_pct = (neet_only["hh_has_child_0_3"].value_counts(normalize=True) * 100)
+
+print("\nNEET households with child aged 0–3:")
+print(f"Has child 0–3: {neet_child03_pct.get(True,0):.1f}%")
+print(f"No child 0–3: {neet_child03_pct.get(False,0):.1f}%")
+
+#has children or not
+personal["child_under18"] = personal["q01_03"] < 18
+
+hh_child18 = (personal.groupby(["psu_number", "hh_number"])["child_under18"].sum().reset_index().rename(columns={"child_under18": "hh_children_count"}))
+working_age = pd.merge(working_age, hh_child18, on=["psu_number", "hh_number"], how="left")
+
+working_age["neet_has_children"] = working_age.apply(
+    lambda row: True 
+        if (row["neet_status"] 
+            and row["q01_05"] != "Never married" 
+            and row["q01_04"] in ["HEAD", "HUSBAND", "WIFE"] 
+            and row["hh_children_count"] > 0) 
+        else False,
+    axis=1)
+neet_only = working_age[working_age["neet_status"]]
+children_pct = neet_only["neet_has_children"].value_counts(normalize=True) * 100
+
+print("\nNEET individuals likely to have children:")
+print(f"Has children: {children_pct.get(True,0):.1f}%")
+print(f"No children: {children_pct.get(False,0):.1f}%")
