@@ -53,10 +53,8 @@ working_age["neet_status"] = (working_age["classify1"] != "employed") & (working
 def agebins(row):
    if not row["neet_status"]:
        return None
-   if 10 <= row.get("q01_03") <= 15:
-       return "10 to 15"
-   if 15 < row.get("q01_03") <= 20:
-       return "16 to 20"
+   if 15 <= row.get("q01_03") <= 20:
+       return "15 to 20"
    if 20 < row.get("q01_03") <= 25:
        return "21 to 25"
    if 25 < row.get("q01_03") <= 30:
