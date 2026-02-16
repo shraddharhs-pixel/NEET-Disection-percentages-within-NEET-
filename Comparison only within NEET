@@ -49,6 +49,12 @@ working_age = mergedfinal[mergedfinal["q01_03"] >= 15].copy()
 # NEET status
 working_age["neet_status"] = (working_age["classify1"] != "employed") & (working_age["q07_04"] != 3)
 
+#NEET percentage
+neet_count = working_age["neet_status"].sum()
+total_working_age = working_age.shape[0]
+neet_percent = (neet_count / total_working_age) * 100
+print(f"NEET individuals:{neet_percent:.1f}")
+
 # age bins
 def agebins(row):
    if not row["neet_status"]:
