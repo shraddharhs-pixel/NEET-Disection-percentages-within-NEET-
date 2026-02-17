@@ -216,8 +216,7 @@ print(f"NEET household missing remittance info: {percent.get('missing',0):.1f}%"
 
 # Calculate total remittance for households
 remit1 = working_age["q14_21"].where(working_age["q14_21"] > 0)
-remit2 = working_age["q14_20"].where(working_age["q14_20"] > 0) if "q14_20" in working_age.columns else pd.Series(0, index=working_age.index)
-remit_total = remit1.fillna(0) + remit2.fillna(0)
+remit_total = remit1.fillna(0)
 
 # Keep only households with positive remittance
 remit_df = working_age[remit_total > 0].copy()
