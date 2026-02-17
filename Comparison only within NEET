@@ -219,14 +219,15 @@ remit1 = working_age["q14_21"].where(working_age["q14_21"] > 0)
 remit_total = remit1.fillna(0)
 
 # Keep only households with positive remittance
-remit_df = working_age[remit_total > 0].copy()
-remit_df["remit_total"] = remit_total[remit_total > 0]
+remit_df = working_age[working_age["q14_21"] > 0].copy()
+remit_df["remit_total"] = remit_df["q14_21"]
 
-# Create weighted share and quintiles for remittance
 remit_df = remit_df.sort_values("remit_total")
-remit_df["remit_wt"] = remit_df["ind_wt"].sum()
-remit_df["remit_share"] = remit_df["remit_wt"] / remit_df["ind_wt"].sum()
-remit_df["remit_quintile"] = pd.cut(remit_df["remit_share"], bins=[0, 0.2, 0.4, 0.6, 0.8, 1], labels=[1, 2, 3, 4, 5])
+
+# Compute cumulative weighted share
+remit_df["cum_wt"] = remit_df["ind_wt"].cumsum() / remit_df["ind_wt"].sum()
+remit_df["remit_quintile"] = pd.cut(remit_df["cum_wt"], bins=[0, 0.2, 0.4, 0.6, 0.8, 1], labels=[1, 2, 3, 4, 5])
+
 working_age.loc[remit_df.index, "remittance_quintile"] = remit_df["remit_quintile"]
 
 # Function to assign remittance quintile to NEETs receiving remittance
@@ -242,7 +243,6 @@ working_age["neet_remittance_quintile"] = working_age.apply(remittance_amount, a
 # NEET share by remittance quintile
 neet_only = working_age[working_age["neet_status"]]
 remittance_share = (neet_only.groupby("neet_remittance_quintile")["ind_wt"].sum() / neet_only["ind_wt"].sum() * 100)
-print("\nNEET share by remittance quintile (%):")
 print(remittance_share.sort_index())
 
 # Show remittance quintile ranges (actual NPR amounts)
