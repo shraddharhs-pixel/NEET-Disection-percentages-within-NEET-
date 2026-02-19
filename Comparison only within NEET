@@ -405,51 +405,47 @@ print("\nNEET households with child aged 0–3:")
 print(f"Has child 0–3: {neet03percentages.get(True,0):.1f}%")
 print(f"No child 0–3: {neet03percentages.get(False,0):.1f}%")
 
-# individuals with childern under 18
+# Count children under 18 per household
 personal["child_under18"] = personal["q01_03"] < 18
 
-# Flag if the Head has a minor child (son/daughter)
-personal["is_head_child"] = (personal["q01_04"] == 'SON/DAUGHTER') & (personal["q01_03"] < 18)
+hh_child18 = (personal.groupby(["psu_number", "hh_number"])["child_under18"].sum().reset_index().rename(columns={"child_under18": "hh_children_count"}))
+working_age = pd.merge(working_age, hh_child18, on=["psu_number", "hh_number"], how="left")
 
-# Create the household-level stats
-hh_stats = personal.groupby(["psu_number", "hh_number"]).agg(
-    hh_children_count=('child_under18', 'sum'),
-    head_has_minor_child=('is_head_child', 'any')).reset_index()
+# Head has minor child (for Approach 3)
+personal["is_child_of_head"] = (personal["q01_04"] == "SON/DAUGHTER") & (personal["q01_03"] < 18)
+hh_head_child = (personal.groupby(["psu_number", "hh_number"])["is_child_of_head"].any().reset_index().rename(columns={"is_child_of_head": "head_has_minor_child"}))
+working_age = pd.merge(working_age, hh_head_child, on=["psu_number", "hh_number"], how="left")
 
-# 4. Merge to working_age
-working_age = working_age.drop(columns=['hh_children_count', 'head_has_minor_child'], errors='ignore')
-working_age = pd.merge(working_age, hh_stats, on=["psu_number", "hh_number"], how="left")
-
-# APPROACH 1
+# Approach 1: Original
 def approach1(row):
-   # Must be NEET, Married, the HEAD, and have children in the house
-   if row.get("neet_status") == True and row.get("q01_05") != "Never married" and row.get("q01_04") == "HEAD" and row.get("hh_children_count", 0) > 0:
-       return True
-   return False
+    if (row["neet_status"] and row["q01_05"] != "Never married" and row["q01_04"] in ["HEAD", "HUSBAND", "WIFE"] and row.get("hh_children_count", 0) > 0):
+        return True
+    return False
 
-# APPROACH 2: BROAD (No head)
+# Approach 2: remove HEAD
 def approach2(row):
-   if row.get("neet_status") == True and row.get("hh_children_count", 0) > 0:
-       return True
-   return False
+    if (row["neet_status"] and row["q01_05"] != "Never married" and row["q01_04"] == "HUSBAND/WIFE" and row.get("hh_children_count", 0) > 0):
+        return True
+    return False
 
-# APPROACH 3: checking if they actually have a child by the condition
+# Approach 3: remove HEAD AND the household head should have a son or daughter under 18
 def approach3(row):
-   if row.get("neet_status") == True and row.get("q01_05") != "Never married" and row.get("q01_04") == "HUSBAND/WIFE" and row.get("head_has_minor_child") == True:
-       return True
-   return False
+    if (row["neet_status"] and row["q01_05"] != "Never married" and row["q01_04"] == "HUSBAND/WIFE" and row.get("head_has_minor_child", False)):
+        return True
+    return False
 
-# Apply the functions
+# Apply all approaches
 working_age["child_app1"] = working_age.apply(approach1, axis=1)
 working_age["child_app2"] = working_age.apply(approach2, axis=1)
 working_age["child_app3"] = working_age.apply(approach3, axis=1)
 
-# Printing results
-neet_only = working_age[working_age["neet_status"] == True]
+# Calculate percentages
+neet_only = working_age[working_age["neet_status"]]
 percentage1 = (neet_only.groupby("child_app1")["ind_wt"].sum() / neet_only["ind_wt"].sum() * 100).get(True, 0)
 percentage2 = (neet_only.groupby("child_app2")["ind_wt"].sum() / neet_only["ind_wt"].sum() * 100).get(True, 0)
 percentage3 = (neet_only.groupby("child_app3")["ind_wt"].sum() / neet_only["ind_wt"].sum() * 100).get(True, 0)
 
+print("\nNEET individuals likely to have children:")
 print(f"Approach 1 (Original): {percentage1:.1f}%")
-print(f"Approach 2 (No HEAD constraint): {percentage2:.1f}%")
+print(f"Approach 2 (No HEAD): {percentage2:.1f}%")
 print(f"Approach 3 (Nuclear Proxy): {percentage3:.1f}%")
