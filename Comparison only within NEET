@@ -195,6 +195,7 @@ def neet_remittance_from_abroad(row):
        return "absentee_unknown"
    if not (800 <= countrycode < 820):  # outside Nepal remittance code range
        return "absentee_not_abroad"
+   
    remittance = row.get("q14_15")
    if pd.isna(remittance):
        return "missing"
@@ -418,7 +419,7 @@ working_age = pd.merge(working_age, hh_head_child, on=["psu_number", "hh_number"
 
 # Approach 1: Original
 def approach1(row):
-    if (row["neet_status"] and row["q01_05"] != "Never married" and row["q01_04"] in ["HEAD", "HUSBAND", "WIFE"] and row.get("hh_children_count", 0) > 0):
+    if (row["neet_status"] and row["q01_05"] != "Never married" and row["q01_04"] in ["HEAD", "HUSBAND/WIFE"] and row.get("hh_children_count", 0) > 0):
         return True
     return False
 
