@@ -31,25 +31,42 @@ def classify(row):
    return "not_in_lf"
 
 # MERGE DATASETS
-
-# Remove duplicate personal records based on PSU, household, and individual codes
 personal_unique = personal.drop_duplicates(subset=["psu_number", "hh_number", "idcode"])
 
-# Merge personal info with employment data (inner join keeps only people present in both)
-merged = pd.merge(personal_unique, employment, on=["psu_number", "hh_number", "idcode"], how="inner")
+# Aggregate absentees: check if ANYONE is absent or sends money in the HH
+abs_summary = absentees.groupby(["psu_number", "hh_number"])["q14_01"].first().reset_index()
 
-# Merge with weights data (left join keeps all merged records)
-mergedfinal = pd.merge(merged, weight[["psu_number", "hh_number", "hhs_wt", "ind_wt"]], on=["psu_number", "hh_number"], how="left")
+abroad_summary = abroadabsentees.groupby(["psu_number", "hh_number"]).agg({
+    "q14_11": "first", 
+    "q14_15": "first", 
+    "q14_20": "sum", 
+    "q14_21": "sum"  # Summing total remittances for the HH
+}).reset_index()
 
-# Merge with poverty, education, absentee, housing, farming, and asset datasets
-mergedfinal = pd.merge(mergedfinal, poverty[["psu_number", "hh_number", "ad_4", "domain", "prov", "poor", "pcep", "quintile_pcep"]], on=["psu_number", "hh_number"], how="left")
-mergedfinal = pd.merge(mergedfinal, education[["psu_number", "hh_number", "idcode", "q07_04", "q07_06"]], on=["psu_number", "hh_number", "idcode"], how="left")
-mergedfinal = pd.merge(mergedfinal, absentees[["psu_number", "hh_number", "q14_01"]], on=["psu_number", "hh_number"], how="left")
-mergedfinal = pd.merge(mergedfinal, abroadabsentees[["psu_number", "hh_number", "q14_11", "q14_15", "q14_20", "q14_21"]], on=["psu_number", "hh_number"], how="left")
+# Aggregate assets and farming (taking the first entry or sum if numeric)
+assets_summary = assets.groupby(["psu_number", "hh_number"])[["q13_28", "q13_29", "q13_34", "q13_35"]].first().reset_index()
+farming1_summary = farming1.groupby(["psu_number", "hh_number"])[["q11_31", "q11_31a"]].first().reset_index()
+farming2_summary = farming2.groupby(["psu_number", "hh_number"])[["q11_13"]].first().reset_index()
+
+# 3. SEQUENTIAL MERGING (Watch the shape!)
+merged = pd.merge(personal_unique, employment, on=["psu_number", "hh_number", "idcode"], how="left")
+
+# Merge Education (Individual level)
+merged = pd.merge(merged, education[["psu_number", "hh_number", "idcode", "q07_04", "q07_06"]], on=["psu_number", "hh_number", "idcode"], how="left")
+
+# Merge Household Level Data (Merge on HH keys only)
+mergedfinal = pd.merge(merged, weight[["psu_number", "hh_number", "hhs_wt", "ind_wt"]].drop_duplicates(), on=["psu_number", "hh_number"], how="left")
+
+mergedfinal = pd.merge(mergedfinal, poverty[["psu_number", "hh_number", "ad_4", "domain", "prov", "poor", "pcep", "quintile_pcep"]],on=["psu_number", "hh_number"], how="left")
+
+mergedfinal = pd.merge(mergedfinal, abs_summary, on=["psu_number", "hh_number"], how="left")
+mergedfinal = pd.merge(mergedfinal, abroad_summary, on=["psu_number", "hh_number"], how="left")
 mergedfinal = pd.merge(mergedfinal, housing[["psu_number", "hh_number", "q02_12"]], on=["psu_number", "hh_number"], how="left")
-mergedfinal = pd.merge(mergedfinal, farming1[["psu_number", "hh_number", "q11_31", "q11_31a"]], on=["psu_number", "hh_number"], how="left")
-mergedfinal = pd.merge(mergedfinal, farming2[["psu_number", "hh_number", "q11_13"]], on=["psu_number", "hh_number"], how="left")
-mergedfinal = pd.merge(mergedfinal, assets[["psu_number", "hh_number", "q13_28", "q13_29", "q13_34", "q13_35"]], on=["psu_number", "hh_number"], how="left")
+mergedfinal = pd.merge(mergedfinal, farming1_summary, on=["psu_number", "hh_number"], how="left")
+mergedfinal = pd.merge(mergedfinal, farming2_summary, on=["psu_number", "hh_number"], how="left")
+mergedfinal = pd.merge(mergedfinal, assets_summary, on=["psu_number", "hh_number"], how="left")
+
+print(f"Final shape: {mergedfinal.shape}") 
 
 # Apply employment classification to all rows
 mergedfinal["classify1"] = mergedfinal.apply(classify, axis=1)
@@ -72,6 +89,48 @@ def neet_rate(df):
 neet_percent = neet_rate(working_age)
 print(f"NEET individuals (15+): {neet_percent:.1f}%")
 
+# Calculate NEET percentage by household head sex
+def hh_head(row):
+   if row.get("q01_04", "") == "HEAD" and row["neet_status"]:
+       return f"{row['q01_02']} head"
+   return "Other"
+working_age["hh_head"] = working_age.apply(hh_head, axis=1)
+neet_only = working_age[working_age["neet_status"] == True]
+
+hhhpercentages = (neet_only.groupby("hh_head")["ind_wt"].sum() / neet_only["ind_wt"].sum() * 100)
+print(f"NEET Female Household Head: {hhhpercentages.get('Female head',0):.1f}%")
+print(f"NEET Male Household Head: {hhhpercentages.get('Male head',0):.1f}%")
+
+# Marital status
+def marital(row):
+   if not row["neet_status"]:
+       return None
+   if row["q01_05"] == "Married":
+       return "Married"
+   elif row["q01_05"] == "Never married":
+       return "Never married"
+   else:
+       return "Other"
+
+working_age["marital_status"] = working_age.apply(marital, axis=1)
+neet_only = working_age[working_age["neet_status"] == True]
+maritalpercentages = (neet_only.groupby("marital_status")["ind_wt"].sum()/ neet_only["ind_wt"].sum() * 100)
+
+print(f"NEET Married: {maritalpercentages.get('Married',0):.1f}%")
+print(f"NEET Never married: {maritalpercentages.get('Never married',0):.1f}%")
+print(f"NEET Other: {maritalpercentages.get('Other',0):.1f}%")
+
+# NEET by sex
+def neetsex(row):
+   if row["neet_status"]:
+       return row["q01_02"]
+   return "Other"
+
+working_age["neet_sex"] = working_age.apply(neetsex, axis=1)
+neet_only = working_age[working_age["neet_status"] == True]
+sexpercentages = (neet_only.groupby("neet_sex")["ind_wt"].sum()/ neet_only["ind_wt"].sum() * 100)
+
+print(sexpercentages)
 # Function to categorize NEET individuals into age bins
 def agebins(row):
    if not row["neet_status"]:
@@ -99,56 +158,9 @@ def agebins(row):
 
 # Apply age bins
 working_age["age_bins"] = working_age.apply(agebins, axis=1)
-
-# Filter NEET only
 neet_only = working_age[working_age["neet_status"] == True]
-# Calculate NEET percentage by age group
 agepercentages = (neet_only.groupby("age_bins")["ind_wt"].sum() / neet_only["ind_wt"].sum() * 100)
 print(agepercentages)
-
-# Function to label household head for NEET individuals
-def hh_head(row):
-   if row.get("q01_04", "") == "HEAD" and row["neet_status"]:
-       return f"{row['q01_02']} head"
-   return "Other"
-working_age["hh_head"] = working_age.apply(hh_head, axis=1)
-neet_only = working_age[working_age["neet_status"] == True]
-
-# Calculate NEET percentage by household head sex
-hhhpercentages = (neet_only.groupby("hh_head")["ind_wt"].sum() / neet_only["ind_wt"].sum() * 100)
-print(f"NEET Female Household Head: {hhhpercentages.get('Female head',0):.1f}%")
-print(f"NEET Male Household Head: {hhhpercentages.get('Male head',0):.1f}%")
-
-# NEET by sex
-def neetsex(row):
-   if row["neet_status"]:
-       return row["q01_02"]
-   return "Other"
-
-working_age["neet_sex"] = working_age.apply(neetsex, axis=1)
-neet_only = working_age[working_age["neet_status"] == True]
-sexpercentages = (neet_only.groupby("neet_sex")["ind_wt"].sum()/ neet_only["ind_wt"].sum() * 100)
-
-print(sexpercentages)
-
-# Marital status
-def marital(row):
-   if not row["neet_status"]:
-       return None
-   if row["q01_05"] == "Married":
-       return "Married"
-   elif row["q01_05"] == "Never married":
-       return "Never married"
-   else:
-       return "Other"
-
-working_age["marital_status"] = working_age.apply(marital, axis=1)
-neet_only = working_age[working_age["neet_status"] == True]
-maritalpercentages = (neet_only.groupby("marital_status")["ind_wt"].sum()/ neet_only["ind_wt"].sum() * 100)
-
-print(f"NEET Married: {maritalpercentages.get('Married',0):.1f}%")
-print(f"NEET Never married: {maritalpercentages.get('Never married',0):.1f}%")
-print(f"NEET Other: {maritalpercentages.get('Other',0):.1f}%")
 
 # Rural/urban
 neet_only = working_age[working_age["neet_status"]]
@@ -214,57 +226,33 @@ print(f"NEET household with no absentee: {percent.get('no_absentee',0):.1f}%")
 print(f"NEET household missing remittance info: {percent.get('missing',0):.1f}%")
 
 # REMITTANCE QUINTILES
-
-# Calculate total remittance for households
-remit1 = working_age["q14_21"].where(working_age["q14_21"] > 0)
-remit_total = remit1.fillna(0)
-
-# Keep only households with positive remittance
-remit_df = working_age[working_age["q14_21"] > 0].copy()
-remit_df["remit_total"] = remit_df["q14_21"]
+remit_df = working_age[["psu_number","hh_number","q14_21","hhs_wt"]].drop_duplicates()
+remit_df = remit_df[remit_df["q14_21"] > 0].copy()
+remit_df = remit_df.rename(columns={"q14_21": "remit_total"})
 
 remit_df = remit_df.sort_values("remit_total")
+remit_df["cum_wt"] = remit_df["hhs_wt"].cumsum() / remit_df["hhs_wt"].sum()
+remit_df["remit_quintile"] = pd.cut(remit_df["cum_wt"], bins=[0,0.2,0.4,0.6,0.8,1], labels=[1,2,3,4,5])
 
-# Compute cumulative weighted share
-remit_df["cum_wt"] = remit_df["ind_wt"].cumsum() / remit_df["ind_wt"].sum()
-remit_df["remit_quintile"] = pd.cut(remit_df["cum_wt"], bins=[0, 0.2, 0.4, 0.6, 0.8, 1], labels=[1, 2, 3, 4, 5])
+# Merge back to individuals
+working_age = pd.merge(working_age, remit_df[["psu_number","hh_number","remit_quintile"]], on=["psu_number","hh_number"], how="left")
 
-working_age.loc[remit_df.index, "remittance_quintile"] = remit_df["remit_quintile"]
+# NEET distribution among remittance-receiving households
+neet_remit = working_age[(working_age["neet_status"]) & (working_age["remit_quintile"].notna())]
 
-# Function to assign remittance quintile to NEETs receiving remittance
-def remittance_amount(row):
-    if not row["neet_status"]:
-        return None
-    if row.get("q14_15") not in ["YES", 1]:
-        return None
-    return row.get("remittance_quintile")
+remittance_share = (neet_remit.groupby("remit_quintile")["ind_wt"].sum() / neet_remit["ind_wt"].sum()* 100)
 
-working_age["neet_remittance_quintile"] = working_age.apply(remittance_amount, axis=1)
-
-# NEET share by remittance quintile
-neet_only = working_age[working_age["neet_status"]]
-remittance_share = (neet_only.groupby("neet_remittance_quintile")["ind_wt"].sum() / neet_only["ind_wt"].sum() * 100)
+print("\nNEET distribution across remittance quintiles:")
 print(remittance_share.sort_index())
 
-# Show remittance quintile ranges (actual NPR amounts)
-labels = ["Q1 poorest", "Q2", "Q3", "Q4", "Q5 richest"]
-_, bins = pd.qcut(remit_df["remit_total"], 5, retbins=True, duplicates="drop")
-print("\nRemittance quintile ranges (NPR):")
-for i in range(len(bins) - 1):
-    print(f"{labels[i]}: {bins[i]:,.0f} to {bins[i+1]:,.0f}")
-
 # FAMILY CONSUMPTION
-
-# Use existing quintile of per capita consumption from dataset
 working_age["pcep_quintile"] = working_age["quintile_pcep"]
 neet_only = working_age[working_age["neet_status"]]
 neet_quintile_share = (neet_only.groupby("pcep_quintile")["ind_wt"].sum()/ neet_only["ind_wt"].sum()* 100)
 print(neet_quintile_share.sort_index())
 
-# Calculate weighted mean of per capita consumption
-meanpcep = ((working_age["pcep"] * working_age["ind_wt"]).sum()/ working_age["ind_wt"].sum())
-
 # Classify NEETs above or below mean consumption
+meanpcep = ((working_age["pcep"] * working_age["ind_wt"]).sum()/ working_age["ind_wt"].sum())
 def neetpcep_mean(row):
    if not row["neet_status"]:
        return None
@@ -272,7 +260,6 @@ def neetpcep_mean(row):
        return "above mean"
    return "below mean"
 
-# NEET distribution above/below mean consumption
 working_age["neet_pcep_mean"] = working_age.apply(neetpcep_mean, axis=1)
 neet_only = working_age[working_age["neet_status"] == True]
 pceppercentages = (neet_only.groupby("neet_pcep_mean")["ind_wt"].sum()/ neet_only["ind_wt"].sum() * 100)
@@ -281,7 +268,6 @@ print(f"NEET above mean: {pceppercentages.get('above mean', 0):.1f}%")
 print(f"NEET below mean: {pceppercentages.get('below mean', 0):.1f}%")
 
 # ASSETS
-
 # Calculate total household and other assets
 dwelling = pd.to_numeric(working_age["q02_12"], errors="coerce").fillna(0)
 if "q11_31a" in working_age.columns:
@@ -305,18 +291,33 @@ assets_positive = working_age[working_age["total_assets"] > 0].copy()
 assets_positive = assets_positive.sort_values("total_assets")
 assets_positive["wt"] = assets_positive["ind_wt"].sum()
 assets_positive["share"] = assets_positive["wt"] / assets_positive["ind_wt"].sum()
-assets_positive["asset_quintile"] = pd.cut( assets_positive["share"], bins=[0, 0.2, 0.4, 0.6, 0.8, 1], labels=[1, 2, 3, 4, 5])
 
-working_age.loc[assets_positive.index, "asset_quintile"] = assets_positive["asset_quintile"]
+# ASSET QUINTILES (household level)
+# Create household-level dataset
+asset_df = working_age[[
+    "psu_number","hh_number","total_assets","hhs_wt"
+]].drop_duplicates()
 
-# NEET share by asset quintile
+# Keep households with assets
+asset_df = asset_df[asset_df["total_assets"] > 0].copy()
+
+# Sort by assets
+asset_df = asset_df.sort_values("total_assets")
+
+# Weighted cumulative share
+asset_df["cum_wt"] = asset_df["hhs_wt"].cumsum() / asset_df["hhs_wt"].sum()
+
+# Assign quintiles
+asset_df["asset_quintile"] = pd.cut(asset_df["cum_wt"], bins=[0,0.2,0.4,0.6,0.8,1], labels=[1,2,3,4,5])
+
+# Merge back to working_age
+working_age = pd.merge(working_age, asset_df[["psu_number","hh_number","asset_quintile"]], on=["psu_number","hh_number"], how="left")
 neet_only = working_age[working_age["neet_status"]]
-asset_share = (neet_only.groupby("asset_quintile")["ind_wt"].sum()/ neet_only["ind_wt"].sum()* 100)
-print("\nNEET share by WEIGHTED asset quintile (%):")
+
+asset_share = (neet_only.groupby("asset_quintile")["ind_wt"].sum() / neet_only["ind_wt"].sum() * 100)
 print(asset_share.sort_index())
 
 # EDUCATION
-
 # NEET distribution by current or past school attendance
 neet_only = working_age[working_age["neet_status"] == True]
 neet_edu_percent = (neet_only.groupby("q07_04")["ind_wt"].sum() / neet_only["ind_wt"].sum() * 100)
@@ -343,7 +344,7 @@ def edu_level_completed(row):
    elif level == 15:
        return "Professional Degree"
    elif level == 16:
-       return "Literate (Levelles)"
+       return "Literate (Levelless)"
    elif level == 17:
        return "Illiterate"
    else:
