@@ -48,7 +48,7 @@ assets_summary = assets.groupby(["psu_number", "hh_number"])[["q13_28", "q13_29"
 farming1_summary = farming1.groupby(["psu_number", "hh_number"])[["q11_31", "q11_31a"]].first().reset_index()
 farming2_summary = farming2.groupby(["psu_number", "hh_number"])[["q11_13"]].first().reset_index()
 
-# 3. SEQUENTIAL MERGING (Watch the shape!)
+# SEQUENTIAL MERGING
 merged = pd.merge(personal_unique, employment, on=["psu_number", "hh_number", "idcode"], how="left")
 
 # Merge Education (Individual level)
@@ -76,7 +76,7 @@ working_age = mergedfinal[mergedfinal["q01_03"] >= 15].copy() #filtering age
 working_age = working_age[working_age["classify1"].notna() & working_age["q07_04"].notna()] #
 working_age = working_age.drop_duplicates(subset=["psu_number", "hh_number", "idcode"])
 
-#identify NEET ()not in education, employment, and training
+#identify NEET (not in education, employment, and training)
 working_age["neet_status"] = (working_age["classify1"] != "employed") & (working_age["q07_04"] != 3)
 def neet_rate(df):
     total = df["ind_wt"].sum()
@@ -131,6 +131,7 @@ neet_only = working_age[working_age["neet_status"] == True]
 sexpercentages = (neet_only.groupby("neet_sex")["ind_wt"].sum()/ neet_only["ind_wt"].sum() * 100)
 
 print(sexpercentages)
+
 # Function to categorize NEET individuals into age bins
 def agebins(row):
    if not row["neet_status"]:
@@ -281,10 +282,8 @@ else:
 property_asset = pd.to_numeric(working_age["q13_29"], errors="coerce").where(working_age["q13_28"].isin(["YES", 1]),0).fillna(0)
 other_assets = pd.to_numeric(working_age["q13_35"], errors="coerce").where(working_age["q13_34"].isin(["YES", 1]),0).fillna(0)
 
-# Sum all assets to get total_assets
+# Sum all assets to get total positive assets
 working_age["total_assets"] = dwelling + land + property_asset + other_assets
-
-# Keep only households with positive assets
 assets_positive = working_age[working_age["total_assets"] > 0].copy()
 
 # Sort by total_assets, compute cumulative weighted share, and assign quintiles
@@ -298,16 +297,12 @@ asset_df = working_age[[
     "psu_number","hh_number","total_assets","hhs_wt"
 ]].drop_duplicates()
 
-# Keep households with assets
+# Keep households with assets and sort
 asset_df = asset_df[asset_df["total_assets"] > 0].copy()
-
-# Sort by assets
 asset_df = asset_df.sort_values("total_assets")
 
 # Weighted cumulative share
 asset_df["cum_wt"] = asset_df["hhs_wt"].cumsum() / asset_df["hhs_wt"].sum()
-
-# Assign quintiles
 asset_df["asset_quintile"] = pd.cut(asset_df["cum_wt"], bins=[0,0.2,0.4,0.6,0.8,1], labels=[1,2,3,4,5])
 
 # Merge back to working_age
@@ -424,7 +419,7 @@ def approach1(row):
         return True
     return False
 
-# Approach 2: remove HEAD
+# Approach 2: remove HEAD and the person should be husband/wife to the head
 def approach2(row):
     if (row["neet_status"] and row["q01_05"] != "Never married" and row["q01_04"] == "HUSBAND/WIFE" and row.get("hh_children_count", 0) > 0):
         return True
