@@ -307,7 +307,6 @@ def weighted_avg_children(df, flag_col):
 
 summary_avg_corrected = working_age.groupby("neet_status_compare").apply(lambda x: pd.Series({
     "Avg Age": (x["q01_03"] * x["ind_wt"]).sum() / x["ind_wt"].sum(),
-    "Avg child number (hh_children_count)": (x["hh_children_count"] * x["ind_wt"]).sum() / x["ind_wt"].sum(),
     "Avg child number (Approach1)": weighted_avg_children(x, "child_app1"),
     "Avg child number (Approach2)": weighted_avg_children(x, "child_app2"),
     "Avg child number (Approach3)": weighted_avg_children(x, "child_app3")}))
@@ -352,27 +351,33 @@ comparison_columns = [
 
 
 # define order of labor statuses
+neet_only = working_age[working_age["neet_status_compare"] == "NEET"]
 for col, title in comparison_columns:
+    cross = pd.crosstab(
+    neet_only[col],
+    columns="NEET",
+    values=neet_only["ind_wt"],
+    aggfunc="sum"
+).fillna(0)
 
-    cross = pd.crosstab(working_age[col], working_age["neet_status_compare"], values=working_age["ind_wt"], aggfunc='sum').fillna(0)
-    cross_pct = cross.div(cross.sum(axis=1), axis=0) * 100
-    cross_pct = cross_pct.reindex(fill_value=0)
+# convert to % of total NEET
+    cross_pct = (cross / cross.sum().values[0]) * 100
     fig, ax = plt.subplots(figsize=(8,5))
 
-    cross_pct.plot(kind="bar", stacked=True, colormap="Set3", ax=ax)
+    cross_pct.plot(kind="bar", color="skyblue", ax=ax)
 
     for container in ax.containers:
         for bar in container:
             height = bar.get_height()
             if height > 3: ax.text( bar.get_x() + bar.get_width() / 2, bar.get_y() + height / 2, f"{height:.0f}%", ha='center', va='center',fontsize=8)
 
-    ax.set_title(f"{title} (%)")
+    ax.set_title(f"{title} (% of Total NEET)")
     ax.set_ylabel("Percentage (%)")
     ax.set_xlabel(title)
     ax.set_ylim(0, 100)
 
     plt.xticks(rotation=30, ha='right')
-    ax.legend(title="Labor Status", bbox_to_anchor=(1.02, 1), loc="upper left")
+    ax.legend().remove()
 
     plt.tight_layout()
 
