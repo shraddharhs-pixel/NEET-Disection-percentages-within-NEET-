@@ -349,7 +349,16 @@ comparison_columns = [
     ("child_app2", "Approach 2 (Spouse only)"),
     ("child_app3", "Approach 3 (Spouse + kids <18 strict)")]
 
+fig, ax = plt.subplots(figsize=(8,5))
+age_edu_pct.plot(kind="bar", stacked=True, ax=ax)
 
+ax.set_title("Education Status by Age Group (%)")
+ax.set_ylim(0,100)
+
+plt.xticks(rotation=30)
+plt.tight_layout()
+plt.savefig("neet/education_age.png")
+plt.close()
 # define order of labor statuses
 neet_only = working_age[working_age["neet_status_compare"] == "NEET"]
 for col, title in comparison_columns:
